@@ -1,12 +1,12 @@
 # usdpln-tray
 
-Показывает курс USD/PLN в системном трее. Данные — NBP API (Narodowy Bank Polski).
+Shows the USD/PLN exchange rate in the system tray. Data from the NBP API (National Bank of Poland).
 
-## Установка и запуск (Windows)
+## Install and run (Windows)
 
 ```bat
 pip install -r requirements.txt
 python tray.py
 ```
 
-Курс обновляется каждые 5 минут. Правая кнопка мыши по иконке — меню (обновить / выйти).
+The rate refreshes every hour and each sample is logged to `rates.db` (SQLite, created next to `tray.py`). Right-click the icon for the menu (Refresh / Exit).

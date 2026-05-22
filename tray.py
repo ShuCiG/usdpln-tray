@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """USD/PLN tray app — tooltip shows current rate from NBP API."""
 
+import os
+import sqlite3
 import threading
 import time
 
@@ -8,7 +10,26 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 import pystray
 
-REFRESH_INTERVAL = 300  # seconds
+REFRESH_INTERVAL = 3600  # seconds (1 hour)
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rates.db")
+
+
+def init_db() -> None:
+    """Create the rates table if missing."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS rates ("
+            "ts INTEGER PRIMARY KEY, rate REAL NOT NULL)"
+        )
+
+
+def save_rate(rate: float) -> None:
+    """Store one rate sample keyed by unix timestamp."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO rates (ts, rate) VALUES (?, ?)",
+            (int(time.time()), rate),
+        )
 
 
 def fetch_rate() -> str:
@@ -19,9 +40,13 @@ def fetch_rate() -> str:
         )
         r.raise_for_status()
         rate = r.json()["rates"][0]["mid"]
+        try:
+            save_rate(rate)
+        except Exception:
+            pass  # DB write failure must not break the tray
         return f"USD/PLN: {rate:.4f}"
     except Exception as e:
-        return f"USD/PLN: błąd ({e})"
+        return f"USD/PLN: error ({e})"
 
 
 def make_icon_image(text: str) -> Image.Image:
@@ -43,6 +68,7 @@ def make_icon_image(text: str) -> Image.Image:
 
 
 def run_tray():
+    init_db()
     rate_label = fetch_rate()
     icon_image = make_icon_image(rate_label)
 
@@ -51,9 +77,9 @@ def run_tray():
         icon=icon_image,
         title=rate_label,  # tooltip shown on hover
         menu=pystray.Menu(
-            pystray.MenuItem(lambda text: text._icon.title, None, enabled=False),
-            pystray.MenuItem("Odśwież", lambda icon, item: refresh(icon)),
-            pystray.MenuItem("Wyjdź", lambda icon, item: icon.stop()),
+            pystray.MenuItem(lambda item: icon.title, None, enabled=False),
+            pystray.MenuItem("Refresh", lambda icon, item: refresh(icon)),
+            pystray.MenuItem("Exit", lambda icon, item: icon.stop()),
         ),
     )
 
