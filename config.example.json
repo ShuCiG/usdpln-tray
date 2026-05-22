@@ -1,0 +1,18 @@
+{
+  "refresh_interval": 3600,
+  "alerts": {
+    "spike_pct": 1.0,
+    "threshold_high": 3.75,
+    "threshold_low": null
+  },
+  "desktop_notifications": true,
+  "email": {
+    "enabled": false,
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 465,
+    "username": "you@gmail.com",
+    "password": "",
+    "from_addr": "you@gmail.com",
+    "to_addr": "you@gmail.com"
+  }
+}
