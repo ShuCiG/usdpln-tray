@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(pip install -r requirements.txt)",
+      "PowerShell(python -c \"import tray; print\\(tray.fetch_rate\\(\\)\\)\")",
+      "PowerShell(python tray.py)",
+      "Bash(python -c \"import requests, PIL, pystray; print\\('deps OK'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit -m '@ *)",
+      "Bash(git commit *)",
+      "Bash(rm .git/COMMIT_EDITMSG_FIX)"
+    ]
+  }
+}
