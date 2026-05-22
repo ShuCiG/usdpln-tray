@@ -50,20 +50,26 @@ def fetch_rate() -> str:
 
 
 def make_icon_image(text: str) -> Image.Image:
-    """Render rate text into a 64x64 icon."""
-    img = Image.new("RGBA", (64, 64), (30, 30, 30, 255))
+    """Render a large centered '$' into a 64x64 icon."""
+    size = 64
+    img = Image.new("RGBA", (size, size), (30, 30, 30, 255))
     draw = ImageDraw.Draw(img)
-    # Try to use a small font; fall back to default
+    # Try to use a bold font sized to fill the icon; fall back to default
     try:
-        import sys, os
+        import sys
         if sys.platform == "win32":
             font_path = os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts", "arialbd.ttf")
         else:
             font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        font = ImageFont.truetype(font_path, 12)
+        font = ImageFont.truetype(font_path, 52)
     except Exception:
         font = ImageFont.load_default()
-    draw.text((2, 24), "$", fill=(50, 200, 50, 255), font=font)
+    glyph = "$"
+    # Center the glyph using its real bounding box
+    left, top, right, bottom = draw.textbbox((0, 0), glyph, font=font)
+    x = (size - (right - left)) / 2 - left
+    y = (size - (bottom - top)) / 2 - top
+    draw.text((x, y), glyph, fill=(50, 200, 50, 255), font=font)
     return img
 
 
