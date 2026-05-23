@@ -16,14 +16,20 @@ import threading
 import time
 
 import requests
-from PIL import Image, ImageDraw, ImageFont
-import pystray
 
 import notify
 
+# pystray, Pillow, and matplotlib are only needed for the tray + chart UI on
+# Windows. They are imported lazily inside run_tray() / make_icon_image() so
+# that headless mode (e.g. inside a Linux Docker container) can run without
+# those packages installed.
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(SCRIPT_DIR, "rates.db")
-CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.json")
+# Both paths can be overridden by env vars for container/Docker deployments.
+DB_PATH = os.environ.get("USDPLN_DB_PATH", os.path.join(SCRIPT_DIR, "rates.db"))
+CONFIG_PATH = os.environ.get(
+    "USDPLN_CONFIG_PATH", os.path.join(SCRIPT_DIR, "config.json")
+)
 NBP_URL = "http://api.nbp.pl/api/exchangerates/rates/A/USD/?format=json"
 
 DEFAULT_CONFIG = {
@@ -210,8 +216,10 @@ def process_reading(prev_rate: float | None, config: dict,
 # Tray icon
 # --------------------------------------------------------------------------
 
-def make_icon_image(text: str) -> Image.Image:
-    """Render a large centered '$' into a 64x64 icon."""
+def make_icon_image(text: str):
+    """Render a large centered '$' into a 64x64 icon (PIL Image)."""
+    from PIL import Image, ImageDraw, ImageFont
+
     size = 64
     img = Image.new("RGBA", (size, size), (30, 30, 30, 255))
     draw = ImageDraw.Draw(img)
@@ -244,6 +252,8 @@ def open_chart() -> None:
 
 def run_tray(config: dict) -> None:
     """Run the app as a system tray icon."""
+    import pystray
+
     init_db()
     prev_rate = last_known_rate()
     rate, label = process_reading(prev_rate, config, headless=False)

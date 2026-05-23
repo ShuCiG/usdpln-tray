@@ -116,3 +116,38 @@ python tray.py --headless
   `pythonw` command above at logon.
 
 Use `--config PATH` to point at a config file other than `config.json`.
+
+The DB and config paths can also be set via environment variables:
+`USDPLN_DB_PATH` and `USDPLN_CONFIG_PATH`. Both default to the file alongside
+`tray.py`.
+
+## Docker (headless deployment)
+
+The repo ships a `Dockerfile` and `docker-compose.yml` that run the headless
+poller in a Linux container — useful for keeping the rate logger and email
+alerts up on a VPS or NAS, where Windows tray / chart features are not
+applicable. `restart: unless-stopped` makes the container self-recover on
+crashes and after host reboots.
+
+```bash
+# One-time: prepare config.json next to docker-compose.yml.
+cp config.example.json config.json
+# edit config.json: fill SMTP credentials, set email.enabled to true
+
+docker compose up -d --build
+docker compose logs -f
+```
+
+Layout:
+
+- `requirements.txt` uses `sys_platform == "win32"` markers, so the container
+  installs only `requests` and skips the Windows-only packages (`pystray`,
+  `Pillow`, `windows-toasts`, `matplotlib`).
+- The container mounts two volumes:
+  - `./docker-data` → `/data` — persisted SQLite DB (`rates.db` + alerts).
+  - `./config.json` → `/config/config.json` (read-only) — runtime config.
+- Inside the container `tray.py --headless` is run with
+  `USDPLN_DB_PATH=/data/rates.db` and `USDPLN_CONFIG_PATH=/config/config.json`.
+
+To stop the service: `docker compose down`. The DB and config stay on the
+host.

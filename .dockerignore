@@ -1,0 +1,22 @@
+# VCS / tooling
+.git/
+.gitignore
+.claude/
+
+# Python build artifacts
+__pycache__/
+*.pyc
+
+# Local state and secrets - never bake into the image
+rates.db
+docker-data/
+config.json
+
+# Windows-only / not used in headless container
+chart.py
+
+# Docs and infra files
+*.md
+Dockerfile
+docker-compose.yml
+.dockerignore

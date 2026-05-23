@@ -1,0 +1,10 @@
+services:
+  usdpln-headless:
+    build: .
+    container_name: usdpln-headless
+    restart: unless-stopped
+    volumes:
+      # SQLite DB persisted on the host so it survives container rebuilds.
+      - ./docker-data:/data
+      # config.json holds the SMTP password; mount it read-only.
+      - ./config.json:/config/config.json:ro

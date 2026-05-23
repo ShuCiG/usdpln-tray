@@ -1,5 +1,10 @@
-pystray
-Pillow
+# Cross-platform: needed by the headless / Docker mode.
 requests
-windows-toasts
-matplotlib
+
+# Tray + chart UI: only required on Windows. The sys_platform markers
+# let pip on Linux (Docker container) skip these without errors.
+pystray; sys_platform == "win32"
+Pillow; sys_platform == "win32"
+windows-toasts; sys_platform == "win32"
+matplotlib; sys_platform == "win32"
+
