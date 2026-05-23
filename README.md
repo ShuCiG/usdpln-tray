@@ -12,7 +12,33 @@ python tray.py
 ```
 
 The rate refreshes every hour. Each sample is logged to `rates.db` (SQLite,
-created next to `tray.py`). Right-click the icon for the menu (Refresh / Exit).
+created next to `tray.py`). Right-click the icon for the menu
+(Rate chart / Refresh / Exit).
+
+## Rate chart
+
+The tray menu has a **Rate chart** item that opens a window with the rate
+history from `rates.db`. The window has two dropdowns:
+
+- **Period** — `1 hour`, `24 hours`, `7 days`, `30 days`, `1 year`.
+- **Type** — `line`, `scatter`, `step`.
+
+The aggregation granularity is auto-picked from the period:
+
+| Period | Aggregation |
+|--------|-------------|
+| 1 hour | raw (every sample) |
+| 24 hours | 4-hour average |
+| 7 days | 4-hour average |
+| 30 days | daily average |
+| 1 year | daily average |
+
+The matplotlib navigation toolbar at the bottom of the window allows pan,
+zoom, and save-to-PNG. The chart can also be opened standalone:
+
+```bat
+python chart.py
+```
 
 ## Configuration
 

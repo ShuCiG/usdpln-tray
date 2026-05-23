@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -234,6 +235,13 @@ def make_icon_image(text: str) -> Image.Image:
     return img
 
 
+def open_chart() -> None:
+    """Spawn chart.py in its own process so the Tk window stays off the pystray loop."""
+    chart_path = os.path.join(SCRIPT_DIR, "chart.py")
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen([sys.executable, chart_path], creationflags=creationflags)
+
+
 def run_tray(config: dict) -> None:
     """Run the app as a system tray icon."""
     init_db()
@@ -248,6 +256,7 @@ def run_tray(config: dict) -> None:
         title=label,  # tooltip shown on hover
         menu=pystray.Menu(
             pystray.MenuItem(lambda item: icon.title, None, enabled=False),
+            pystray.MenuItem("Rate chart", lambda icon, item: open_chart()),
             pystray.MenuItem("Refresh", lambda icon, item: refresh(icon)),
             pystray.MenuItem("Exit", lambda icon, item: icon.stop()),
         ),
