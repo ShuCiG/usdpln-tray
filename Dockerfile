@@ -21,4 +21,7 @@ ENV USDPLN_DB_PATH=/data/rates.db \
 # /config - mount your config.json here, typically read-only
 VOLUME ["/data", "/config"]
 
+HEALTHCHECK --interval=2h --timeout=10s --start-period=30s --retries=2 \
+  CMD python -c "import sqlite3,time,os; r=sqlite3.connect(os.environ['USDPLN_DB_PATH']).execute('SELECT ts FROM rates ORDER BY ts DESC LIMIT 1').fetchone(); exit(0 if r and time.time()-r[0]<7200 else 1)"
+
 CMD ["python", "tray.py", "--headless"]
