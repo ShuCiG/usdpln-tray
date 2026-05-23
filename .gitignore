@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+rates.db
+config.json
+.claude/
