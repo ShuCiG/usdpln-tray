@@ -121,6 +121,33 @@ The DB and config paths can also be set via environment variables:
 `USDPLN_DB_PATH` and `USDPLN_CONFIG_PATH`. Both default to the file alongside
 `tray.py`.
 
+## Standalone executable (PyInstaller)
+
+Build a single Windows `.exe` that runs without Python installed.
+
+```bat
+pip install pyinstaller
+build.bat
+```
+
+Output: `dist\usdpln-tray\usdpln-tray.exe` plus a folder of dependencies
+(`--onedir` layout — fast startup, fewer antivirus false positives than
+`--onefile`). To distribute, zip the whole `dist\usdpln-tray\` folder.
+
+At runtime the `.exe` looks for `config.json` and writes `rates.db` next to
+itself, so drop the bundled folder anywhere and put your `config.json`
+beside the `.exe`. `config.example.json` is bundled inside the build as a
+template.
+
+Notes:
+- The tray menu's **Rate chart** still works from the bundled `.exe`: the
+  same binary re-launches itself with an internal `--chart` flag.
+- Headless mode (`--headless`) is not exposed from the build — the bundle
+  is built with `--windowed`, which has no console. Use the Python script
+  or the Docker container for headless deployments.
+- Windows Defender occasionally flags PyInstaller bundles as false
+  positives; if needed, sign the executable or add an exclusion.
+
 ## Docker (headless deployment)
 
 The repo ships a `Dockerfile` and `docker-compose.yml` that run the headless

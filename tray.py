@@ -26,7 +26,15 @@ import notify
 # that headless mode (e.g. inside a Linux Docker container) can run without
 # those packages installed.
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+def _base_dir() -> str:
+    """Return the directory next to the running script or frozen .exe."""
+    if getattr(sys, "frozen", False):
+        # Bundled by PyInstaller — sys.executable is usdpln-tray.exe
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+SCRIPT_DIR = _base_dir()
 # Both paths can be overridden by env vars for container/Docker deployments.
 DB_PATH = os.environ.get("USDPLN_DB_PATH", os.path.join(SCRIPT_DIR, "rates.db"))
 CONFIG_PATH = os.environ.get(
@@ -277,13 +285,26 @@ _chart_proc: subprocess.Popen | None = None
 
 
 def open_chart() -> None:
-    """Spawn chart.py in its own process so the Tk window stays off the pystray loop."""
+    """Spawn the chart UI in its own process so the Tk window stays off the pystray loop.
+
+    In source mode this runs ``python chart.py``; in a PyInstaller bundle it
+    re-launches the same .exe with the internal ``--chart`` flag so a single
+    binary covers both modes. The handle is cached so repeated menu clicks
+    do not stack chart windows.
+    """
     global _chart_proc
     if _chart_proc is not None and _chart_proc.poll() is None:
         return  # already running
-    chart_path = os.path.join(SCRIPT_DIR, "chart.py")
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    _chart_proc = subprocess.Popen([sys.executable, chart_path], creationflags=creationflags)
+    if getattr(sys, "frozen", False):
+        _chart_proc = subprocess.Popen(
+            [sys.executable, "--chart"], creationflags=creationflags
+        )
+    else:
+        chart_path = os.path.join(SCRIPT_DIR, "chart.py")
+        _chart_proc = subprocess.Popen(
+            [sys.executable, chart_path], creationflags=creationflags
+        )
 
 
 def run_tray(config: dict) -> None:
@@ -380,9 +401,17 @@ def main() -> None:
         "--config", default=CONFIG_PATH,
         help="path to the config JSON file (default: config.json)",
     )
+    # Internal: used by the PyInstaller bundle to invoke the chart UI without
+    # needing a separate executable. Hidden from --help.
+    parser.add_argument("--chart", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    config = load_config(args.config)
 
+    if args.chart:
+        import chart
+        chart.main(db_path=DB_PATH)
+        return
+
+    config = load_config(args.config)
     if args.headless:
         run_headless(config)
     else:
