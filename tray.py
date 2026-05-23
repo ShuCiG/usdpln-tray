@@ -16,6 +16,8 @@ import threading
 import time
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 import notify
 
@@ -30,7 +32,7 @@ DB_PATH = os.environ.get("USDPLN_DB_PATH", os.path.join(SCRIPT_DIR, "rates.db"))
 CONFIG_PATH = os.environ.get(
     "USDPLN_CONFIG_PATH", os.path.join(SCRIPT_DIR, "config.json")
 )
-NBP_URL = "http://api.nbp.pl/api/exchangerates/rates/A/USD/?format=json"
+NBP_URL = "https://api.nbp.pl/api/exchangerates/rates/A/USD/?format=json"
 
 DEFAULT_CONFIG = {
     "refresh_interval": 3600,
@@ -50,6 +52,18 @@ DEFAULT_CONFIG = {
         "to_addr": "",
     },
 }
+
+_http_session: requests.Session | None = None
+
+
+def _get_session() -> requests.Session:
+    global _http_session
+    if _http_session is None:
+        session = requests.Session()
+        retry = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+        session.mount("https://", HTTPAdapter(max_retries=retry))
+        _http_session = session
+    return _http_session
 
 
 # --------------------------------------------------------------------------
@@ -102,7 +116,7 @@ def save_rate(rate: float) -> None:
     """Store one rate sample keyed by unix timestamp."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO rates (ts, rate) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO rates (ts, rate) VALUES (?, ?)",
             (int(time.time()), rate),
         )
 
@@ -131,6 +145,18 @@ def last_known_rate() -> float | None:
         return None
 
 
+def last_known_rate_ts() -> int | None:
+    """Return the timestamp of the most recent stored rate, or None."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT ts FROM rates ORDER BY ts DESC LIMIT 1"
+            ).fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
 # --------------------------------------------------------------------------
 # Rate fetching and alerting
 # --------------------------------------------------------------------------
@@ -141,7 +167,7 @@ def fetch_rate() -> tuple[float | None, str]:
     rate is None on failure; the rate is saved to the DB on success.
     """
     try:
-        r = requests.get(NBP_URL, timeout=10)
+        r = _get_session().get(NBP_URL, timeout=10)
         r.raise_for_status()
         rate = r.json()["rates"][0]["mid"]
         try:
@@ -153,25 +179,29 @@ def fetch_rate() -> tuple[float | None, str]:
         return None, f"USD/PLN: error ({e})"
 
 
-def check_alerts(prev: float | None, curr: float | None, config: dict) -> list:
+def check_alerts(prev: float | None, curr: float | None, config: dict,
+                  skip_spike: bool = False) -> list:
     """Return a list of (kind, message) alerts for the new reading.
 
     Compares against the previous reading: a sharp percentage move, or a
     crossing of the configured high/low thresholds. Crossings fire once per
     crossing, so a rate that stays past a bound is not re-alerted hourly.
+    skip_spike suppresses the percentage-move check (used on first poll after
+    a long gap to avoid false positives from stale prev_rate).
     """
     alerts: list[tuple[str, str]] = []
     if prev is None or curr is None:
         return alerts
 
     a = config["alerts"]
-    spike_pct = a.get("spike_pct")
-    if spike_pct:
-        pct = (curr - prev) / prev * 100
-        if abs(pct) >= spike_pct:
-            alerts.append(
-                ("spike", f"USD/PLN moved {pct:+.2f}% ({prev:.4f} -> {curr:.4f})")
-            )
+    if not skip_spike:
+        spike_pct = a.get("spike_pct")
+        if spike_pct:
+            pct = (curr - prev) / prev * 100
+            if abs(pct) >= spike_pct:
+                alerts.append(
+                    ("spike", f"USD/PLN moved {pct:+.2f}% ({prev:.4f} -> {curr:.4f})")
+                )
 
     high = a.get("threshold_high")
     if high is not None and prev < high <= curr:
@@ -202,11 +232,11 @@ def dispatch_alerts(alerts: list, config: dict, headless: bool) -> None:
 
 
 def process_reading(prev_rate: float | None, config: dict,
-                     headless: bool) -> tuple[float | None, str]:
+                     headless: bool, skip_spike: bool = False) -> tuple[float | None, str]:
     """Fetch a rate, check it against prev_rate, and dispatch any alerts."""
     rate, label = fetch_rate()
     if rate is not None:
-        alerts = check_alerts(prev_rate, rate, config)
+        alerts = check_alerts(prev_rate, rate, config, skip_spike=skip_spike)
         if alerts:
             dispatch_alerts(alerts, config, headless)
     return rate, label
@@ -243,11 +273,17 @@ def make_icon_image(text: str):
     return img
 
 
+_chart_proc: subprocess.Popen | None = None
+
+
 def open_chart() -> None:
     """Spawn chart.py in its own process so the Tk window stays off the pystray loop."""
+    global _chart_proc
+    if _chart_proc is not None and _chart_proc.poll() is None:
+        return  # already running
     chart_path = os.path.join(SCRIPT_DIR, "chart.py")
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    subprocess.Popen([sys.executable, chart_path], creationflags=creationflags)
+    _chart_proc = subprocess.Popen([sys.executable, chart_path], creationflags=creationflags)
 
 
 def run_tray(config: dict) -> None:
@@ -256,7 +292,13 @@ def run_tray(config: dict) -> None:
 
     init_db()
     prev_rate = last_known_rate()
-    rate, label = process_reading(prev_rate, config, headless=False)
+    last_ts = last_known_rate_ts()
+    skip_spike = last_ts is not None and (
+        time.time() - last_ts > 1.5 * config["refresh_interval"]
+    )
+    rate_lock = threading.Lock()
+
+    rate, label = process_reading(prev_rate, config, headless=False, skip_spike=skip_spike)
     if rate is not None:
         prev_rate = rate
 
@@ -274,9 +316,12 @@ def run_tray(config: dict) -> None:
 
     def refresh(icon):
         nonlocal prev_rate
-        new_rate, new_label = process_reading(prev_rate, config, headless=False)
-        if new_rate is not None:
-            prev_rate = new_rate
+        with rate_lock:
+            current_prev = prev_rate
+        new_rate, new_label = process_reading(current_prev, config, headless=False)
+        with rate_lock:
+            if new_rate is not None:
+                prev_rate = new_rate
         icon.title = new_label
         icon.icon = make_icon_image(new_label)
 
@@ -302,10 +347,14 @@ def run_headless(config: dict) -> None:
     sys.stdout.reconfigure(line_buffering=True)
     interval = config["refresh_interval"]
     prev_rate = last_known_rate()
+    last_ts = last_known_rate_ts()
+    skip_spike = last_ts is not None and (time.time() - last_ts > 1.5 * interval)
     print(f"[usdpln] headless mode - polling every {interval}s. Ctrl+C to stop.")
     try:
         while True:
-            rate, label = process_reading(prev_rate, config, headless=True)
+            rate, label = process_reading(prev_rate, config, headless=True,
+                                          skip_spike=skip_spike)
+            skip_spike = False  # only skip on first poll after a long gap
             stamp = time.strftime("%Y-%m-%d %H:%M:%S")
             print(f"[usdpln] {stamp}  {label}")
             if rate is not None:

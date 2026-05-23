@@ -4,6 +4,7 @@ Both senders swallow their own errors: an alert that fails to deliver must
 never crash the polling loop.
 """
 
+import os
 import smtplib
 from email.message import EmailMessage
 
@@ -28,7 +29,8 @@ def send_email(email_cfg: dict, subject: str, body: str) -> bool:
 
     Skips cleanly (returns False) when no password is configured.
     """
-    if not email_cfg.get("password"):
+    password = os.environ.get("USDPLN_SMTP_PASSWORD") or email_cfg.get("password")
+    if not password:
         print("[notify] email skipped: no password configured")
         return False
     try:
@@ -42,12 +44,12 @@ def send_email(email_cfg: dict, subject: str, body: str) -> bool:
         port = email_cfg["smtp_port"]
         if port == 465:
             with smtplib.SMTP_SSL(host, port, timeout=15) as smtp:
-                smtp.login(email_cfg["username"], email_cfg["password"])
+                smtp.login(email_cfg["username"], password)
                 smtp.send_message(msg)
         else:
             with smtplib.SMTP(host, port, timeout=15) as smtp:
                 smtp.starttls()
-                smtp.login(email_cfg["username"], email_cfg["password"])
+                smtp.login(email_cfg["username"], password)
                 smtp.send_message(msg)
         return True
     except Exception as e:
