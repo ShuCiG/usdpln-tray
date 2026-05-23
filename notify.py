@@ -24,7 +24,7 @@ def send_toast(title: str, message: str) -> bool:
 
 
 def send_email(email_cfg: dict, subject: str, body: str) -> bool:
-    """Send an email via SMTP over SSL. Returns True on success.
+    """Send an email via SMTP. Uses STARTTLS for port 587, SSL for port 465.
 
     Skips cleanly (returns False) when no password is configured.
     """
@@ -38,11 +38,17 @@ def send_email(email_cfg: dict, subject: str, body: str) -> bool:
         msg["To"] = email_cfg["to_addr"]
         msg.set_content(body)
 
-        with smtplib.SMTP_SSL(
-            email_cfg["smtp_host"], email_cfg["smtp_port"], timeout=15
-        ) as smtp:
-            smtp.login(email_cfg["username"], email_cfg["password"])
-            smtp.send_message(msg)
+        host = email_cfg["smtp_host"]
+        port = email_cfg["smtp_port"]
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=15) as smtp:
+                smtp.login(email_cfg["username"], email_cfg["password"])
+                smtp.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=15) as smtp:
+                smtp.starttls()
+                smtp.login(email_cfg["username"], email_cfg["password"])
+                smtp.send_message(msg)
         return True
     except Exception as e:
         print(f"[notify] email failed: {e}")
