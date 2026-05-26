@@ -2,7 +2,7 @@
 
 Monitors the USD/PLN exchange rate. Shows it in the Windows system tray, logs
 every reading to a local SQLite database, and raises alerts on sharp moves or
-threshold crossings. Data from the NBP API (National Bank of Poland).
+threshold crossings. Data from Yahoo Finance (live spot rate).
 
 ## Install and run (Windows)
 
@@ -11,7 +11,7 @@ pip install -r requirements.txt
 python tray.py
 ```
 
-The rate refreshes every hour. Each sample is logged to `rates.db` (SQLite,
+The rate refreshes every minute. Each sample is logged to `rates.db` (SQLite,
 created next to `tray.py`). Right-click the icon for the menu
 (Rate chart / Refresh / Exit).
 
@@ -28,7 +28,7 @@ The aggregation granularity is auto-picked from the period:
 | Period | Aggregation |
 |--------|-------------|
 | 1 hour | raw (every sample) |
-| 24 hours | 4-hour average |
+| 24 hours | 30-minute average |
 | 7 days | 4-hour average |
 | 30 days | daily average |
 | 1 year | daily average |
@@ -48,9 +48,10 @@ on).
 
 ```json
 {
-  "refresh_interval": 3600,
+  "refresh_interval": 60,
   "alerts": {
     "spike_pct": 1.0,
+    "spike_window_seconds": 3600,
     "threshold_high": 3.75,
     "threshold_low": null
   },
@@ -67,9 +68,14 @@ on).
 }
 ```
 
-- `refresh_interval` — seconds between polls (3600 = 1 hour).
-- `spike_pct` — alert when the rate moves at least this percent vs the previous
-  reading. Set to `0` to disable spike alerts.
+- `refresh_interval` — seconds between polls (60 = once a minute).
+- `spike_pct` — alert when the rate moves at least this percent over the
+  configured window. Set to `0` to disable spike alerts.
+- `spike_window_seconds` — comparison window for `spike_pct`. The current rate
+  is compared against the most recent sample at or before
+  `now - spike_window_seconds` (default `3600` = 1 hour). With minute polling
+  this gives `spike_pct` a fixed time-based meaning instead of "since the last
+  poll".
 - `threshold_high` / `threshold_low` — alert when the rate crosses above the
   high bound or below the low bound. `null` disables that bound.
 - `desktop_notifications` — show Windows toast alerts (tray mode only).
@@ -79,14 +85,17 @@ Each fired alert is also recorded in the `alerts` table of `rates.db`.
 
 ## Alerts
 
-An alert fires when, compared to the previous reading:
+An alert fires when:
 
-- the rate moved by at least `spike_pct` percent, or
-- the rate crossed above `threshold_high`, or
-- the rate crossed below `threshold_low`.
+- the rate moved by at least `spike_pct` percent over the last
+  `spike_window_seconds` (compared to the rate from that long ago), or
+- the rate crossed above `threshold_high` between the previous reading and
+  the current one, or
+- the rate crossed below `threshold_low` between the previous reading and
+  the current one.
 
 Threshold alerts fire once per crossing — a rate that stays past a bound is not
-re-alerted every hour.
+re-alerted on every poll.
 
 ## Email alerts (Gmail)
 

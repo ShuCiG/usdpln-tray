@@ -37,7 +37,7 @@ DEFAULT_DB = os.environ.get("USDPLN_DB_PATH", os.path.join(SCRIPT_DIR, "rates.db
 # (label, period_seconds, bucket_seconds, x-axis fmt)
 PERIODS = [
     ("1 hour",   3600,         1,     "%H:%M"),
-    ("24 hours", 86400,        14400, "%H:%M"),
+    ("24 hours", 86400,        1800,  "%H:%M"),
     ("7 days",   7 * 86400,    14400, "%m-%d"),
     ("30 days",  30 * 86400,   86400, "%m-%d"),
     ("1 year",   365 * 86400,  86400, "%Y-%m"),
