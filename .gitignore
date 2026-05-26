@@ -3,3 +3,8 @@ __pycache__/
 rates.db
 config.json
 .claude/
+
+# PyInstaller build output
+build/
+dist/
+*.spec

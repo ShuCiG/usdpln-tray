@@ -8,6 +8,7 @@ period. Spawned as a subprocess from the tray app, but runnable on its own.
 import argparse
 import os
 import sqlite3
+import sys
 import time
 import tkinter as tk
 from datetime import datetime
@@ -23,13 +24,20 @@ from matplotlib.backends.backend_tkagg import (
 )
 from matplotlib.figure import Figure
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DB = os.path.join(SCRIPT_DIR, "rates.db")
+def _base_dir() -> str:
+    """Directory next to the running script or frozen .exe."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+SCRIPT_DIR = _base_dir()
+DEFAULT_DB = os.environ.get("USDPLN_DB_PATH", os.path.join(SCRIPT_DIR, "rates.db"))
 
 # (label, period_seconds, bucket_seconds, x-axis fmt)
 PERIODS = [
     ("1 hour",   3600,         1,     "%H:%M"),
-    ("24 hours", 86400,        14400, "%H:%M"),
+    ("24 hours", 86400,        1800,  "%H:%M"),
     ("7 days",   7 * 86400,    14400, "%m-%d"),
     ("30 days",  30 * 86400,   86400, "%m-%d"),
     ("1 year",   365 * 86400,  86400, "%Y-%m"),
@@ -57,16 +65,27 @@ def load_data(db_path: str, period_seconds: int, bucket_seconds: int):
     return xs, ys
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="USD/PLN rate history chart.")
-    parser.add_argument(
-        "--db", default=DEFAULT_DB,
-        help="path to rates.db (default: alongside chart.py)",
-    )
-    args = parser.parse_args()
+def main(db_path: str | None = None) -> None:
+    """Open the chart window.
 
-    if not os.path.exists(args.db):
-        print(f"[chart] DB not found: {args.db}")
+    ``db_path`` is honoured when called programmatically (e.g. from
+    ``tray.py --chart`` inside the PyInstaller bundle). When None, argparse
+    is used to read ``--db`` from ``sys.argv``.
+    """
+    if db_path is None:
+        parser = argparse.ArgumentParser(description="USD/PLN rate history chart.")
+        parser.add_argument(
+            "--db", default=DEFAULT_DB,
+            help="path to rates.db (default: alongside chart.py)",
+        )
+        # In a frozen bundle, tray.exe re-launches itself with --chart;
+        # ignore that flag if it slipped into argv.
+        parser.add_argument("--chart", action="store_true", help=argparse.SUPPRESS)
+        args = parser.parse_args()
+        db_path = args.db
+
+    if not os.path.exists(db_path):
+        print(f"[chart] DB not found: {db_path}")
         return
 
     root = tk.Tk()
@@ -105,7 +124,7 @@ def main() -> None:
         ax.clear()
         label, period_s, bucket_s, fmt = PERIODS_BY_LABEL[period_var.get()]
         chart_type = type_var.get()
-        xs, ys = load_data(args.db, period_s, bucket_s)
+        xs, ys = load_data(db_path, period_s, bucket_s)
 
         if not xs:
             ax.text(

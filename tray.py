@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """USD/PLN monitor — system tray app with rate alerts.
 
-Polls the NBP API, logs every reading to a local SQLite database, and raises
-desktop / email alerts on sharp moves or threshold crossings. Runs either as a
-tray icon (default) or headless (``--headless``) for terminal/background use.
+Polls Yahoo Finance for the live USD/PLN spot rate, logs every reading to a
+local SQLite database, and raises desktop / email alerts on sharp moves or
+threshold crossings. Runs either as a tray icon (default) or headless
+(``--headless``) for terminal/background use.
 """
 
 import argparse
@@ -26,18 +27,38 @@ import notify
 # that headless mode (e.g. inside a Linux Docker container) can run without
 # those packages installed.
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+def _base_dir() -> str:
+    """Return the directory next to the running script or frozen .exe."""
+    if getattr(sys, "frozen", False):
+        # Bundled by PyInstaller — sys.executable is usdpln-tray.exe
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+SCRIPT_DIR = _base_dir()
 # Both paths can be overridden by env vars for container/Docker deployments.
 DB_PATH = os.environ.get("USDPLN_DB_PATH", os.path.join(SCRIPT_DIR, "rates.db"))
 CONFIG_PATH = os.environ.get(
     "USDPLN_CONFIG_PATH", os.path.join(SCRIPT_DIR, "config.json")
 )
-NBP_URL = "https://api.nbp.pl/api/exchangerates/rates/A/USD/?format=json"
+YAHOO_URL = (
+    "https://query1.finance.yahoo.com/v8/finance/chart/USDPLN%3DX"
+    "?interval=1m&range=1d"
+)
+# Yahoo rejects the default python-requests UA with HTTP 429.
+YAHOO_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
+}
 
 DEFAULT_CONFIG = {
-    "refresh_interval": 3600,
+    "refresh_interval": 60,
     "alerts": {
         "spike_pct": 1.0,
+        "spike_window_seconds": 3600,
         "threshold_high": None,
         "threshold_low": None,
     },
@@ -157,6 +178,25 @@ def last_known_rate_ts() -> int | None:
         return None
 
 
+def baseline_rate(window_seconds: int) -> float | None:
+    """Most recent stored rate at or before ``now - window_seconds``.
+
+    Used as the comparison anchor for spike alerts so that the threshold
+    has a fixed time-window meaning (e.g. 1% per hour) independent of how
+    often we poll.
+    """
+    target_ts = int(time.time()) - window_seconds
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT rate FROM rates WHERE ts <= ? ORDER BY ts DESC LIMIT 1",
+                (target_ts,),
+            ).fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
 # --------------------------------------------------------------------------
 # Rate fetching and alerting
 # --------------------------------------------------------------------------
@@ -165,11 +205,15 @@ def fetch_rate() -> tuple[float | None, str]:
     """Fetch the current USD/PLN rate. Returns (rate, display_label).
 
     rate is None on failure; the rate is saved to the DB on success.
+    Over weekends and outside trading hours Yahoo keeps returning the last
+    close as ``regularMarketPrice``, so the rate will just plateau — there is
+    no separate "market closed" signal to handle here.
     """
     try:
-        r = _get_session().get(NBP_URL, timeout=10)
+        r = _get_session().get(YAHOO_URL, headers=YAHOO_HEADERS, timeout=10)
         r.raise_for_status()
-        rate = r.json()["rates"][0]["mid"]
+        meta = r.json()["chart"]["result"][0]["meta"]
+        rate = float(meta["regularMarketPrice"])
         try:
             save_rate(rate)
         except Exception:
@@ -179,37 +223,53 @@ def fetch_rate() -> tuple[float | None, str]:
         return None, f"USD/PLN: error ({e})"
 
 
-def check_alerts(prev: float | None, curr: float | None, config: dict,
+def _format_window(seconds: int) -> str:
+    """Human label for a spike-window duration (used in alert messages)."""
+    if seconds >= 3600 and seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    if seconds >= 60 and seconds % 60 == 0:
+        return f"{seconds // 60}m"
+    return f"{seconds}s"
+
+
+def check_alerts(prev: float | None, baseline: float | None,
+                  curr: float | None, config: dict,
                   skip_spike: bool = False) -> list:
     """Return a list of (kind, message) alerts for the new reading.
 
-    Compares against the previous reading: a sharp percentage move, or a
-    crossing of the configured high/low thresholds. Crossings fire once per
-    crossing, so a rate that stays past a bound is not re-alerted hourly.
-    skip_spike suppresses the percentage-move check (used on first poll after
-    a long gap to avoid false positives from stale prev_rate).
+    Spike alerts compare ``curr`` against ``baseline`` (the rate from
+    ~spike_window_seconds ago) so the threshold has a fixed time-window
+    meaning regardless of poll rate. Threshold crossings compare against
+    ``prev`` (the immediately preceding reading) so each crossing fires
+    exactly once. ``skip_spike`` suppresses the spike check on the first
+    poll after a long downtime, where ``baseline`` would otherwise be a
+    stale value from before the gap.
     """
     alerts: list[tuple[str, str]] = []
-    if prev is None or curr is None:
+    if curr is None:
         return alerts
 
     a = config["alerts"]
     if not skip_spike:
         spike_pct = a.get("spike_pct")
-        if spike_pct:
-            pct = (curr - prev) / prev * 100
+        if spike_pct and baseline is not None:
+            pct = (curr - baseline) / baseline * 100
             if abs(pct) >= spike_pct:
-                alerts.append(
-                    ("spike", f"USD/PLN moved {pct:+.2f}% ({prev:.4f} -> {curr:.4f})")
-                )
+                window_label = _format_window(a.get("spike_window_seconds", 3600))
+                alerts.append((
+                    "spike",
+                    f"USD/PLN moved {pct:+.2f}% in {window_label} "
+                    f"({baseline:.4f} -> {curr:.4f})",
+                ))
 
-    high = a.get("threshold_high")
-    if high is not None and prev < high <= curr:
-        alerts.append(("high", f"USD/PLN rose above {high}: {curr:.4f}"))
+    if prev is not None:
+        high = a.get("threshold_high")
+        if high is not None and prev < high <= curr:
+            alerts.append(("high", f"USD/PLN rose above {high}: {curr:.4f}"))
 
-    low = a.get("threshold_low")
-    if low is not None and prev > low >= curr:
-        alerts.append(("low", f"USD/PLN fell below {low}: {curr:.4f}"))
+        low = a.get("threshold_low")
+        if low is not None and prev > low >= curr:
+            alerts.append(("low", f"USD/PLN fell below {low}: {curr:.4f}"))
 
     return alerts
 
@@ -233,10 +293,12 @@ def dispatch_alerts(alerts: list, config: dict, headless: bool) -> None:
 
 def process_reading(prev_rate: float | None, config: dict,
                      headless: bool, skip_spike: bool = False) -> tuple[float | None, str]:
-    """Fetch a rate, check it against prev_rate, and dispatch any alerts."""
+    """Fetch a rate, check it against prev_rate + windowed baseline, and dispatch any alerts."""
     rate, label = fetch_rate()
     if rate is not None:
-        alerts = check_alerts(prev_rate, rate, config, skip_spike=skip_spike)
+        window_s = config["alerts"].get("spike_window_seconds", 3600)
+        baseline = baseline_rate(window_s)
+        alerts = check_alerts(prev_rate, baseline, rate, config, skip_spike=skip_spike)
         if alerts:
             dispatch_alerts(alerts, config, headless)
     return rate, label
@@ -277,13 +339,26 @@ _chart_proc: subprocess.Popen | None = None
 
 
 def open_chart() -> None:
-    """Spawn chart.py in its own process so the Tk window stays off the pystray loop."""
+    """Spawn the chart UI in its own process so the Tk window stays off the pystray loop.
+
+    In source mode this runs ``python chart.py``; in a PyInstaller bundle it
+    re-launches the same .exe with the internal ``--chart`` flag so a single
+    binary covers both modes. The handle is cached so repeated menu clicks
+    do not stack chart windows.
+    """
     global _chart_proc
     if _chart_proc is not None and _chart_proc.poll() is None:
         return  # already running
-    chart_path = os.path.join(SCRIPT_DIR, "chart.py")
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    _chart_proc = subprocess.Popen([sys.executable, chart_path], creationflags=creationflags)
+    if getattr(sys, "frozen", False):
+        _chart_proc = subprocess.Popen(
+            [sys.executable, "--chart"], creationflags=creationflags
+        )
+    else:
+        chart_path = os.path.join(SCRIPT_DIR, "chart.py")
+        _chart_proc = subprocess.Popen(
+            [sys.executable, chart_path], creationflags=creationflags
+        )
 
 
 def run_tray(config: dict) -> None:
@@ -380,9 +455,17 @@ def main() -> None:
         "--config", default=CONFIG_PATH,
         help="path to the config JSON file (default: config.json)",
     )
+    # Internal: used by the PyInstaller bundle to invoke the chart UI without
+    # needing a separate executable. Hidden from --help.
+    parser.add_argument("--chart", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    config = load_config(args.config)
 
+    if args.chart:
+        import chart
+        chart.main(db_path=DB_PATH)
+        return
+
+    config = load_config(args.config)
     if args.headless:
         run_headless(config)
     else:
