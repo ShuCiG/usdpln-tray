@@ -12,7 +12,8 @@ python tray.py
 ```
 
 The rate refreshes every minute. Each sample is logged to `rates.db` (SQLite,
-created next to `tray.py`). Right-click the icon for the menu
+created next to `tray.py`). **Left-click** the icon for a Stocks-style details
+popup (symbol, change, OHLC, intraday sparkline); **right-click** for the menu
 (Rate chart / Refresh / Exit).
 
 ## Rate chart

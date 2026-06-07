@@ -336,6 +336,7 @@ def make_icon_image(text: str):
 
 
 _chart_proc: subprocess.Popen | None = None
+_tooltip_proc: subprocess.Popen | None = None
 
 
 def open_chart() -> None:
@@ -361,6 +362,29 @@ def open_chart() -> None:
         )
 
 
+def open_tooltip() -> None:
+    """Spawn the iOS-Stocks-style tooltip card in its own process.
+
+    Same subprocess pattern as ``open_chart`` so Tk's event loop stays out of
+    pystray's. A cached handle deduplicates rapid left-clicks — repeated
+    clicks while the popup is still up are no-ops, and a fresh quote is
+    fetched the next time it actually closes.
+    """
+    global _tooltip_proc
+    if _tooltip_proc is not None and _tooltip_proc.poll() is None:
+        return
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if getattr(sys, "frozen", False):
+        _tooltip_proc = subprocess.Popen(
+            [sys.executable, "--tooltip"], creationflags=creationflags
+        )
+    else:
+        tooltip_path = os.path.join(SCRIPT_DIR, "tooltip.py")
+        _tooltip_proc = subprocess.Popen(
+            [sys.executable, tooltip_path], creationflags=creationflags
+        )
+
+
 def run_tray(config: dict) -> None:
     """Run the app as a system tray icon."""
     import pystray
@@ -383,6 +407,14 @@ def run_tray(config: dict) -> None:
         title=label,  # tooltip shown on hover
         menu=pystray.Menu(
             pystray.MenuItem(lambda item: icon.title, None, enabled=False),
+            # Hidden item makes left-click on the icon open the details popup,
+            # while right-click still shows the visible items below.
+            pystray.MenuItem(
+                "Show details",
+                lambda icon, item: open_tooltip(),
+                default=True,
+                visible=False,
+            ),
             pystray.MenuItem("Rate chart", lambda icon, item: open_chart()),
             pystray.MenuItem("Refresh", lambda icon, item: refresh(icon)),
             pystray.MenuItem("Exit", lambda icon, item: icon.stop()),
@@ -455,14 +487,20 @@ def main() -> None:
         "--config", default=CONFIG_PATH,
         help="path to the config JSON file (default: config.json)",
     )
-    # Internal: used by the PyInstaller bundle to invoke the chart UI without
-    # needing a separate executable. Hidden from --help.
+    # Internal: used by the PyInstaller bundle to invoke the chart / tooltip
+    # UIs without needing separate executables. Hidden from --help.
     parser.add_argument("--chart", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--tooltip", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     if args.chart:
         import chart
         chart.main(db_path=DB_PATH)
+        return
+
+    if args.tooltip:
+        import tooltip
+        tooltip.main()
         return
 
     config = load_config(args.config)

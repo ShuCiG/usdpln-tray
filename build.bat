@@ -15,6 +15,7 @@ python -m PyInstaller ^
     --name usdpln-tray ^
     --add-data "config.example.json;." ^
     --hidden-import chart ^
+    --hidden-import tooltip ^
     tray.py
 
 if errorlevel 1 (
