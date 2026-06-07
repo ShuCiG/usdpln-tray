@@ -28,14 +28,21 @@ The aggregation granularity is auto-picked from the period:
 
 | Period | Aggregation |
 |--------|-------------|
-| 1 hour | raw (every sample) |
+| 1 hour | 1-minute average |
 | 24 hours | 30-minute average |
 | 7 days | 4-hour average |
 | 30 days | daily average |
 | 1 year | daily average |
 
-The matplotlib navigation toolbar at the bottom of the window allows pan,
-zoom, and save-to-PNG. The chart can also be opened standalone:
+Buckets with no data (weekends, downtime) are forward-filled from the last
+known rate so the line stays continuous instead of collapsing into a single
+dot when the wall-clock window sits entirely on a weekend.
+
+The chart uses the same dark Stocks-style palette as the tooltip popup —
+line color is green or red depending on whether the period closed above or
+below its starting value, with a dashed reference line at that starting
+value. The bottom toolbar provides Home / Pan / Zoom / Save (PNG). The
+chart can also be opened standalone:
 
 ```bat
 python chart.py
@@ -150,8 +157,9 @@ beside the `.exe`. `config.example.json` is bundled inside the build as a
 template.
 
 Notes:
-- The tray menu's **Rate chart** still works from the bundled `.exe`: the
-  same binary re-launches itself with an internal `--chart` flag.
+- The tray menu's **Rate chart** and the **left-click details popup** both
+  work from the bundled `.exe`: the same binary re-launches itself with
+  internal `--chart` / `--tooltip` flags.
 - Headless mode (`--headless`) is not exposed from the build — the bundle
   is built with `--windowed`, which has no console. Use the Python script
   or the Docker container for headless deployments.
